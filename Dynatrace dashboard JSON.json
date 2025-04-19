@@ -1,0 +1,153 @@
+{
+  "dashboardMetadata": {
+    "name": "Windows Server Capacity Planning (90d)",
+    "shared": true,
+    "owner": "auto-generated",
+    "dashboardFilter": {
+      "timeframe": "-90d"
+    }
+  },
+  "tiles": [
+    {
+      "name": "CPU Usage (%) - All Windows Servers",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 0, "left": 0, "width": 760, "height": 228 },
+      "tileFilter": { "timeframe": "-90d" },
+      "customName": "CPU Usage (%) - All Windows Servers",
+      "queries": [
+        {
+          "id": "q1",
+          "metric": "builtin:host.cpu.usage",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "AVG",
+          "filterBy": {
+            "osType": ["WINDOWS"]
+          }
+        }
+      ],
+      "visualConfig": {
+        "type": "LINE_CHART",
+        "series": [
+          {
+            "thresholds": [
+              { "value": 80, "color": "ORANGE" },
+              { "value": 90, "color": "RED" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "Memory Usage (%) - All Windows Servers",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 0, "left": 760, "width": 760, "height": 228 },
+      "tileFilter": { "timeframe": "-90d" },
+      "customName": "Memory Usage (%) - All Windows Servers",
+      "queries": [
+        {
+          "id": "q2",
+          "metric": "builtin:host.mem.usage",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "AVG",
+          "filterBy": {
+            "osType": ["WINDOWS"]
+          }
+        }
+      ],
+      "visualConfig": {
+        "type": "LINE_CHART",
+        "series": [
+          {
+            "thresholds": [
+              { "value": 85, "color": "RED" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "Disk Usage (%) - All Windows Servers",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 240, "left": 0, "width": 760, "height": 228 },
+      "tileFilter": { "timeframe": "-90d" },
+      "customName": "Disk Usage (%) - All Windows Servers",
+      "queries": [
+        {
+          "id": "q3",
+          "metric": "builtin:host.disk.usedPct",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "AVG",
+          "filterBy": {
+            "osType": ["WINDOWS"]
+          }
+        }
+      ],
+      "visualConfig": {
+        "type": "HEATMAP",
+        "series": [
+          {
+            "thresholds": [
+              { "value": 90, "color": "RED" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "Top Hosts by Disk Write IOPS",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 240, "left": 760, "width": 760, "height": 228 },
+      "tileFilter": { "timeframe": "-90d" },
+      "customName": "Top Hosts by Disk Write IOPS",
+      "queries": [
+        {
+          "id": "q4",
+          "metric": "builtin:host.disk.writeIoPs",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "AVG",
+          "filterBy": {
+            "osType": ["WINDOWS"]
+          }
+        }
+      ],
+      "visualConfig": {
+        "type": "TOP_LIST"
+      }
+    },
+    {
+      "name": "Network Throughput (Bytes/sec) - All Windows Servers",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 480, "left": 0, "width": 1520, "height": 228 },
+      "tileFilter": { "timeframe": "-90d" },
+      "customName": "Network Throughput (Bytes/sec) - All Windows Servers",
+      "queries": [
+        {
+          "id": "q5a",
+          "metric": "builtin:host.net.transmit",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "AVG",
+          "filterBy": {
+            "osType": ["WINDOWS"]
+          }
+        },
+        {
+          "id": "q5b",
+          "metric": "builtin:host.net.receive",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "AVG",
+          "filterBy": {
+            "osType": ["WINDOWS"]
+          }
+        }
+      ],
+      "visualConfig": {
+        "type": "LINE_CHART"
+      }
+    }
+  ]
+}

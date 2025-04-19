@@ -1,0 +1,182 @@
+{
+  "dashboardMetadata": {
+    "name": "Windows Server Capacity Planning - 90 Days",
+    "shared": true,
+    "owner": "chatgpt",
+    "preset": false,
+    "dashboardFilter": {
+      "timeframe": "-90d",
+      "managementZone": null
+    }
+  },
+  "tiles": [
+    {
+      "name": "CPU Usage (Windows Hosts)",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 0, "left": 0, "width": 456, "height": 304 },
+      "tileFilter": {},
+      "customName": "CPU Usage (Windows Hosts)",
+      "queries": [
+        {
+          "id": "cpu_usage",
+          "metric": "builtin:host.cpu.usage",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "AVG",
+          "filters": [{ "type": "OS_TYPE", "value": "WINDOWS" }]
+        }
+      ],
+      "visualConfig": {
+        "type": "LINE",
+        "series": [
+          {
+            "metric": "builtin:host.cpu.usage",
+            "aggregation": "AVG",
+            "thresholds": [
+              { "value": 80, "color": "ORANGE" },
+              { "value": 90, "color": "RED" }
+            ]
+          }
+        ],
+        "yAxis": {
+          "unit": "PERCENT",
+          "min": "0",
+          "max": "100"
+        }
+      }
+    },
+    {
+      "name": "Memory Usage (Windows Hosts)",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 0, "left": 456, "width": 456, "height": 304 },
+      "tileFilter": {},
+      "customName": "Memory Usage (Windows Hosts)",
+      "queries": [
+        {
+          "id": "memory_usage",
+          "metric": "builtin:host.mem.usage",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "AVG",
+          "filters": [{ "type": "OS_TYPE", "value": "WINDOWS" }]
+        }
+      ],
+      "visualConfig": {
+        "type": "LINE",
+        "series": [
+          {
+            "metric": "builtin:host.mem.usage",
+            "aggregation": "AVG",
+            "thresholds": [
+              { "value": 85, "color": "RED" }
+            ]
+          }
+        ],
+        "yAxis": {
+          "unit": "PERCENT",
+          "min": "0",
+          "max": "100"
+        }
+      }
+    },
+    {
+      "name": "Disk Usage % (Windows Hosts)",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 304, "left": 0, "width": 456, "height": 304 },
+      "tileFilter": {},
+      "customName": "Disk Usage % (Windows Hosts)",
+      "queries": [
+        {
+          "id": "disk_usage",
+          "metric": "builtin:host.disk.usedPct",
+          "splitBy": ["dt.entity.host", "disk"],
+          "aggregation": "AVG",
+          "filters": [{ "type": "OS_TYPE", "value": "WINDOWS" }]
+        }
+      ],
+      "visualConfig": {
+        "type": "HEATMAP",
+        "series": [
+          {
+            "metric": "builtin:host.disk.usedPct",
+            "aggregation": "AVG",
+            "thresholds": [
+              { "value": 90, "color": "RED" }
+            ]
+          }
+        ],
+        "yAxis": {
+          "unit": "PERCENT"
+        }
+      }
+    },
+    {
+      "name": "Top Hosts by Disk IOPS",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 304, "left": 456, "width": 456, "height": 304 },
+      "tileFilter": {},
+      "customName": "Top Hosts by Disk IOPS",
+      "queries": [
+        {
+          "id": "disk_io",
+          "metric": "builtin:host.disk.read",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "SUM",
+          "filters": [{ "type": "OS_TYPE", "value": "WINDOWS" }]
+        }
+      ],
+      "visualConfig": {
+        "type": "TOP_LIST",
+        "series": [
+          {
+            "metric": "builtin:host.disk.read",
+            "aggregation": "SUM"
+          }
+        ],
+        "sorting": "DESCENDING"
+      }
+    },
+    {
+      "name": "Network Throughput (Windows Hosts)",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": { "top": 608, "left": 0, "width": 912, "height": 304 },
+      "tileFilter": {},
+      "customName": "Network Throughput (Windows Hosts)",
+      "queries": [
+        {
+          "id": "net_tx",
+          "metric": "builtin:host.net.transmit",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "SUM",
+          "filters": [{ "type": "OS_TYPE", "value": "WINDOWS" }]
+        },
+        {
+          "id": "net_rx",
+          "metric": "builtin:host.net.receive",
+          "splitBy": ["dt.entity.host"],
+          "aggregation": "SUM",
+          "filters": [{ "type": "OS_TYPE", "value": "WINDOWS" }]
+        }
+      ],
+      "visualConfig": {
+        "type": "LINE",
+        "series": [
+          {
+            "metric": "builtin:host.net.transmit",
+            "aggregation": "SUM"
+          },
+          {
+            "metric": "builtin:host.net.receive",
+            "aggregation": "SUM"
+          }
+        ],
+        "yAxis": {
+          "unit": "BYTES_PER_SECOND"
+        }
+      }
+    }
+  ]
+}
