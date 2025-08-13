@@ -1,0 +1,76 @@
+# ===========================
+# Dynatrace Capacity Report Script - 90 Days with Thresholds
+# ===========================
+
+# CONFIG
+$token = "DT_API_TOKEN"  # <-- Replace with your API token (needs 'Read entities' + 'Read metrics')
+$env = "https://<your-environment-id>.live.dynatrace.com"  # <-- Your Dynatrace environment URL
+$outputFile = "Dynatrace_Capacity_Report_90days.csv"
+
+# HEADERS
+$headers = @{
+    "Authorization" = "Api-Token $token"
+}
+
+Write-Host "Fetching host entity list..." -ForegroundColor Cyan
+
+# STEP 1: Get Host Entities with OS Version + Host Name
+$hosts = Invoke-RestMethod `
+    -Method GET `
+    -Uri "$env/api/v2/entities?entitySelector=type(HOST)&fields=properties.osVersion,properties.hostname&pageSize=500" `
+    -Headers $headers
+
+$hostList = $hosts.entities | Select-Object entityId,
+    @{Name="HostName";Expression={$_.properties.hostname}},
+    @{Name="OSVersion";Expression={$_.properties.osVersion}}
+
+# Prepare results array
+$results = @()
+
+# STEP 2: Loop each host to get metrics over last 90 days
+foreach ($host in $hostList) {
+    Write-Host "Processing host $($host.HostName)..." -ForegroundColor Yellow
+
+    # CPU Usage (%)
+    $cpu = Invoke-RestMethod `
+        -Method GET `
+        -Uri "$env/api/v2/metrics/query?metricSelector=builtin:host.cpu.usage:avg&entitySelector=entityId($($host.entityId))&from=now-90d&to=now&resolution=Inf" `
+        -Headers $headers
+    $cpuVal = [math]::Round(($cpu.result[0].data[0].values | Measure-Object -Average).Average,2)
+
+    # Memory Usage (%)
+    $mem = Invoke-RestMethod `
+        -Method GET `
+        -Uri "$env/api/v2/metrics/query?metricSelector=builtin:host.mem.usage:avg&entitySelector=entityId($($host.entityId))&from=now-90d&to=now&resolution=Inf" `
+        -Headers $headers
+    $memVal = [math]::Round(($mem.result[0].data[0].values | Measure-Object -Average).Average,2)
+
+    # Disk Usage (%)
+    $disk = Invoke-RestMethod `
+        -Method GET `
+        -Uri "$env/api/v2/metrics/query?metricSelector=builtin:host.disk.usedPct:avg&entitySelector=entityId($($host.entityId))&from=now-90d&to=now&resolution=Inf" `
+        -Headers $headers
+    $diskVal = [math]::Round(($disk.result[0].data[0].values | Measure-Object -Average).Average,2)
+
+    # Threshold logic
+    $cpuStatus = if ($cpuVal -ge 90) { "Critical" } elseif ($cpuVal -ge 80) { "Warning" } else { "OK" }
+    $memStatus = if ($memVal -ge 85) { "Warning" } else { "OK" }
+    $diskStatus = if ($diskVal -ge 90) { "Critical" } else { "OK" }
+
+    # Add to results
+    $results += [pscustomobject]@{
+        HostName       = $host.HostName
+        OSVersion      = $host.OSVersion
+        CPU_Usage_%    = $cpuVal
+        CPU_Status     = $cpuStatus
+        Memory_Usage_% = $memVal
+        Memory_Status  = $memStatus
+        Disk_Usage_%   = $diskVal
+        Disk_Status    = $diskStatus
+    }
+}
+
+# STEP 3: Export to CSV
+$results | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+
+Write-Host "Report saved to $outputFile" -ForegroundColor Green
