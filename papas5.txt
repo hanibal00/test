@@ -1,0 +1,173 @@
+{
+  "metadata": {
+    "configurationVersions": [6]
+  },
+  "id": "windows-capacity",
+  "dashboardMetadata": {
+    "name": "Windows Server Capacity",
+    "shared": false,
+    "owner": "administrator"
+  },
+  "tiles": [
+    {
+      "name": "CPU Usage",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": {
+        "top": 0,
+        "left": 0,
+        "width": 304,
+        "height": 304
+      },
+      "tileFilter": {},
+      "queries": [
+        {
+          "id": "A",
+          "metric": "builtin:host.cpu.usage",
+          "spaceAggregation": "AVG",
+          "timeAggregation": "DEFAULT"
+        }
+      ]
+    },
+    {
+      "name": "Memory Usage",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": {
+        "top": 0,
+        "left": 304,
+        "width": 304,
+        "height": 304
+      },
+      "tileFilter": {},
+      "queries": [
+        {
+          "id": "A",
+          "metric": "builtin:host.mem.usage",
+          "spaceAggregation": "AVG",
+          "timeAggregation": "DEFAULT"
+        }
+      ]
+    },
+    {
+      "name": "Disk Read",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": {
+        "top": 304,
+        "left": 0,
+        "width": 304,
+        "height": 304
+      },
+      "tileFilter": {},
+      "queries": [
+        {
+          "id": "A",
+          "metric": "builtin:host.disk.throughput.read",
+          "spaceAggregation": "AVG",
+          "timeAggregation": "DEFAULT"
+        }
+      ]
+    },
+    {
+      "name": "Disk Write",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": {
+        "top": 304,
+        "left": 304,
+        "width": 304,
+        "height": 304
+      },
+      "tileFilter": {},
+      "queries": [
+        {
+          "id": "A",
+          "metric": "builtin:host.disk.throughput.write",
+          "spaceAggregation": "AVG",
+          "timeAggregation": "DEFAULT"
+        }
+      ]
+    },
+    {
+      "name": "Network In",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": {
+        "top": 608,
+        "left": 0,
+        "width": 304,
+        "height": 304
+      },
+      "tileFilter": {},
+      "queries": [
+        {
+          "id": "A",
+          "metric": "builtin:host.network.throughput.received",
+          "spaceAggregation": "AVG",
+          "timeAggregation": "DEFAULT"
+        }
+      ]
+    },
+    {
+      "name": "Network Out",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": {
+        "top": 608,
+        "left": 304,
+        "width": 304,
+        "height": 304
+      },
+      "tileFilter": {},
+      "queries": [
+        {
+          "id": "A",
+          "metric": "builtin:host.network.throughput.sent",
+          "spaceAggregation": "AVG",
+          "timeAggregation": "DEFAULT"
+        }
+      ]
+    },
+    {
+      "name": "Disk Used",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": {
+        "top": 0,
+        "left": 608,
+        "width": 304,
+        "height": 304
+      },
+      "tileFilter": {},
+      "queries": [
+        {
+          "id": "A",
+          "metric": "builtin:host.disk.used",
+          "spaceAggregation": "AVG",
+          "timeAggregation": "DEFAULT"
+        }
+      ]
+    },
+    {
+      "name": "Disk Available",
+      "tileType": "DATA_EXPLORER",
+      "configured": true,
+      "bounds": {
+        "top": 304,
+        "left": 608,
+        "width": 304,
+        "height": 304
+      },
+      "tileFilter": {},
+      "queries": [
+        {
+          "id": "A",
+          "metric": "builtin:host.disk.avail",
+          "spaceAggregation": "AVG",
+          "timeAggregation": "DEFAULT"
+        }
+      ]
+    }
+  ]
+}
