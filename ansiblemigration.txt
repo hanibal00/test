@@ -1,0 +1,308 @@
+┌─────────────────┐
+│   AWX / Tower    │  ← Schedule (Daily, e.g., 8:00 AM)
+│   or Cron Job    │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐     ┌──────────────┐
+│ Ansible Playbook │────►│ \\Share1\CSV │  (Pull file1.csv)
+│                  │────►│ \\Share2\CSV │  (Pull file2.csv)
+│                  │     └──────────────┘
+│  Compare Logic   │
+│                  │
+│  Send Email      │────► SMTP Server ────► Recipients
+└─────────────────┘
+
+=====================YAML=====================1. Mount the Shares or Use SMB
+# inventory/hosts.yml
+all:
+  hosts:
+    localhost:
+      ansible_connection: local
+  vars:
+    share1_path: "//server1/share/reports"
+    share2_path: "//server2/share/reports"
+    smb_username: "domain\\svc_ansible"
+    smb_password: "{{ vault_smb_password }}"  # ansible-vault encrypted
+
+=====================YAML=====================2. The Playbook
+---
+# playbooks/csv_daily_compare.yml
+- name: Daily CSV Pull, Compare & Email
+  hosts: localhost
+  gather_facts: yes
+  vars:
+    work_dir: "/tmp/csv_compare"
+    share1_unc: "//fileserver1/reports"
+    share2_unc: "//fileserver2/reports"
+    csv1_filename: "inventory_report.csv"
+    csv2_filename: "asset_report.csv"
+    smtp_server: "smtp.company.com"
+    smtp_port: 25
+    email_from: "ansible-noreply@company.com"
+    email_to:
+      - "team@company.com"
+      - "manager@company.com"
+    smb_user: "DOMAIN\\svc_ansible"
+    smb_pass: "{{ vault_smb_password }}"
+    csv_key_column: "AssetID"
+
+  tasks:
+    # ── STAGE 1: SETUP ──────────────────────────────
+    - name: Create working directory
+      ansible.builtin.file:
+        path: "{{ work_dir }}"
+        state: directory
+        mode: '0700'
+
+    # ── STAGE 2: PULL CSVs FROM SHARES ──────────────
+    - name: Mount Share 1
+      ansible.posix.mount:
+        src: "{{ share1_unc }}"
+        path: "/mnt/share1"
+        fstype: cifs
+        opts: "username={{ smb_user }},password={{ smb_pass }},ro"
+        state: mounted
+      become: yes
+
+    - name: Mount Share 2
+      ansible.posix.mount:
+        src: "{{ share2_unc }}"
+        path: "/mnt/share2"
+        fstype: cifs
+        opts: "username={{ smb_user }},password={{ smb_pass }},ro"
+        state: mounted
+      become: yes
+
+    - name: Copy CSV from Share 1
+      ansible.builtin.copy:
+        src: "/mnt/share1/{{ csv1_filename }}"
+        dest: "{{ work_dir }}/file1.csv"
+        remote_src: yes
+
+    - name: Copy CSV from Share 2
+      ansible.builtin.copy:
+        src: "/mnt/share2/{{ csv2_filename }}"
+        dest: "{{ work_dir }}/file2.csv"
+        remote_src: yes
+
+    # ── STAGE 3: COMPARE CSVs ───────────────────────
+    - name: Read CSV file 1
+      community.general.read_csv:
+        path: "{{ work_dir }}/file1.csv"
+        key: "{{ csv_key_column }}"
+      register: csv1
+
+    - name: Read CSV file 2
+      community.general.read_csv:
+        path: "{{ work_dir }}/file2.csv"
+        key: "{{ csv_key_column }}"
+      register: csv2
+
+    - name: Find entries in File1 but NOT in File2
+      ansible.builtin.set_fact:
+        only_in_file1: "{{ csv1.dict.keys() | list | difference(csv2.dict.keys() | list) }}"
+
+    - name: Find entries in File2 but NOT in File1
+      ansible.builtin.set_fact:
+        only_in_file2: "{{ csv2.dict.keys() | list | difference(csv1.dict.keys() | list) }}"
+
+    - name: Find common keys with differences
+      ansible.builtin.set_fact:
+        mismatched_keys: >-
+          {{ csv1.dict.keys() | list | intersect(csv2.dict.keys() | list)
+             | select('in',
+               csv1.dict | dict2items
+               | selectattr('key', 'in', csv2.dict.keys())
+               | rejectattr('value', 'equalto', csv2.dict[item.key] | default({}))
+               | map(attribute='key') | list
+             ) | list }}
+      # For complex comparison, use the Python script approach below ⬇️
+
+    - name: Set flag if differences found
+      ansible.builtin.set_fact:
+        differences_found: "{{ (only_in_file1 | length > 0) or (only_in_file2 | length > 0) }}"
+
+    # ── STAGE 4: GENERATE REPORT ────────────────────
+    - name: Generate HTML email report
+      ansible.builtin.template:
+        src: templates/csv_report.html.j2
+        dest: "{{ work_dir }}/report.html"
+
+    # ── STAGE 5: SEND EMAIL ─────────────────────────
+    - name: Send comparison report email
+      community.general.mail:
+        host: "{{ smtp_server }}"
+        port: "{{ smtp_port }}"
+        from: "{{ email_from }}"
+        to: "{{ email_to }}"
+        subject: "Daily CSV Comparison Report - {{ ansible_date_time.date }}"
+        subtype: html
+        body: "{{ lookup('file', work_dir + '/report.html') }}"
+      when: differences_found | bool
+
+    - name: Send all-clear email
+      community.general.mail:
+        host: "{{ smtp_server }}"
+        port: "{{ smtp_port }}"
+        from: "{{ email_from }}"
+        to: "{{ email_to }}"
+        subject: "✅ Daily CSV Check PASSED - {{ ansible_date_time.date }}"
+        body: "No differences found between the two CSV files."
+      when: not differences_found | bool
+
+    # ── STAGE 6: CLEANUP ────────────────────────────
+    - name: Unmount shares
+      ansible.posix.mount:
+        path: "{{ item }}"
+        state: unmounted
+      loop:
+        - /mnt/share1
+        - /mnt/share2
+      become: yes
+
+    - name: Clean up working directory
+      ansible.builtin.file:
+        path: "{{ work_dir }}"
+        state: absent
+
+=====================YAML=====================3. Email Template
+<!-- templates/csv_report.html.j2 -->
+<html>
+<body>
+<h2>📊 Daily CSV Comparison Report</h2>
+<p><strong>Date:</strong> {{ ansible_date_time.date }}</p>
+<p><strong>File 1:</strong> {{ share1_unc }}/{{ csv1_filename }}</p>
+<p><strong>File 2:</strong> {{ share2_unc }}/{{ csv2_filename }}</p>
+
+<hr>
+
+<h3>🔴 Entries in File1 but NOT in File2 ({{ only_in_file1 | length }})</h3>
+{% if only_in_file1 | length > 0 %}
+<table border="1" cellpadding="5">
+  <tr><th>{{ csv_key_column }}</th></tr>
+  {% for key in only_in_file1 %}
+  <tr><td>{{ key }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>None</p>
+{% endif %}
+
+<h3>🟡 Entries in File2 but NOT in File1 ({{ only_in_file2 | length }})</h3>
+{% if only_in_file2 | length > 0 %}
+<table border="1" cellpadding="5">
+  <tr><th>{{ csv_key_column }}</th></tr>
+  {% for key in only_in_file2 %}
+  <tr><td>{{ key }}</td></tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>None</p>
+{% endif %}
+
+<hr>
+<p><em>Generated by Ansible Automation</em></p>
+</body>
+</html>
+
+===================Option B: If You Must Target a Windows Host===========================
+---
+- name: Daily CSV Compare (Windows Target)
+  hosts: windows_server
+  gather_facts: yes
+  tasks:
+    - name: Pull CSV from Share 1
+      ansible.windows.win_copy:
+        src: "\\\\fileserver1\\reports\\file1.csv"
+        dest: "C:\\temp\\csv_compare\\file1.csv"
+        remote_src: yes
+
+    - name: Pull CSV from Share 2
+      ansible.windows.win_copy:
+        src: "\\\\fileserver2\\reports\\file2.csv"
+        dest: "C:\\temp\\csv_compare\\file2.csv"
+        remote_src: yes
+
+    - name: Compare and Email via PowerShell
+      ansible.windows.win_powershell:
+        script: |
+          $csv1 = Import-Csv "C:\temp\csv_compare\file1.csv"
+          $csv2 = Import-Csv "C:\temp\csv_compare\file2.csv"
+
+          # Your existing comparison logic here
+          $diff = Compare-Object $csv1 $csv2 -Property AssetID, Name, Status
+
+          if ($diff) {
+              $body = $diff | ConvertTo-Html -Head "<style>table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:8px}</style>"
+              $body = $body -join "`n"
+
+              Send-MailMessage -From "ansible@company.com" `
+                -To "team@company.com" `
+                -Subject "CSV Differences Found - $(Get-Date -Format 'yyyy-MM-dd')" `
+                -Body "$body" `
+                -BodyAsHtml `
+                -SmtpServer "smtp.company.com"
+
+              Write-Output "Differences found and email sent"
+          } else {
+              Write-Output "No differences found"
+          }
+      register: result
+
+    - name: Show result
+      debug:
+        var: result.output
+===================================================================================================================
+Scheduling (Replacing Task Scheduler)
+Option 1: AWX / Ansible Tower (Best)
+
+text
+AWX → Templates → Create Job Template
+  ├── Playbook: csv_daily_compare.yml
+  ├── Credentials: vault + SMB creds
+  └── Schedule: Daily at 08:00 AM
+       └── RRULE: FREQ=DAILY;INTERVAL=1
+Option 2: Linux Cron (Free)
+
+Bash
+# /etc/cron.d/csv_compare
+0 8 * * * ansible-user /usr/bin/ansible-playbook /opt/ansible/playbooks/csv_daily_compare.yml --vault-password-file /opt/ansible/.vault_pass 2>&1 | logger -t csv_compare
+Option 3: systemd Timer (Modern Linux)
+
+ini
+# /etc/systemd/system/csv-compare.timer
+[Unit]
+Description=Daily CSV Comparison
+
+[Timer]
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
+ini
+# /etc/systemd/system/csv-compare.service
+[Unit]
+Description=Run CSV Comparison Playbook
+
+[Service]
+Type=oneshot
+User=ansible
+ExecStart=/usr/bin/ansible-playbook /opt/ansible/playbooks/csv_daily_compare.yml --vault-password-file /opt/ansible/.vault_pass
+Migration Path Summary
+
+text
+CURRENT STATE                          FUTURE STATE
+─────────────                          ────────────
+Windows Server                    ──►  Linux Ansible Controller
+  ├── Task Scheduler (daily)      ──►  AWX Schedule / Cron
+  ├── PowerShell pulls CSVs       ──►  Ansible mounts shares & reads CSVs
+  ├── PowerShell compares         ──►  Ansible read_csv + set_fact (or Python)
+  └── PowerShell Send-Mail        ──►  community.general.mail module
+Key Recommendation
+If your PowerShell comparison logic is complex, start with Option B (wrap existing PowerShell, let Ansible orchestrate + schedule). Then gradually migrate the logic to pure Ansible or Python over time. This gives you an immediate win without rewriting everything.
+
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
