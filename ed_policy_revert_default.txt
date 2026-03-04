@@ -1,0 +1,196 @@
+#Requires -Version 5.1
+#Requires -RunAsAdministrator
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+# ─────────────────────────────────────────────
+#  CONFIGURATION
+# ─────────────────────────────────────────────
+$DestAdmx  = 'C:\Windows\PolicyDefinitions\msedge.admx'
+$DestAdml  = 'C:\Windows\PolicyDefinitions\en-US\msedge.adml'
+$PolFile   = 'C:\Windows\System32\GroupPolicy\Machine\Registry.pol'
+$EdgeKey   = 'Software\Policies\Microsoft\Edge'
+
+$ValuesToRemove = @(
+    'EnableOnlineRevocationChecks',
+    'RequireOnlineRevocationChecksForLocalAnchors'
+)
+
+# ─────────────────────────────────────────────
+#  HELPER – Status output
+# ─────────────────────────────────────────────
+function Write-Status {
+    param([string]$Message, [string]$Color = 'Cyan')
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $Message" -ForegroundColor $Color
+}
+
+# ─────────────────────────────────────────────
+#  HELPER – Parse Registry.pol entries
+#  Returns array of hashtables, one per entry,
+#  preserving the raw bytes of each so we can
+#  reconstruct the file without re-encoding.
+# ─────────────────────────────────────────────
+function Parse-PolEntries {
+    param([byte[]]$PolBytes)
+
+    $entries = [System.Collections.Generic.List[hashtable]]::new()
+    $headerLen = 8   # 4 bytes PReg sig + 4 bytes version
+    $pos = $headerLen
+
+    while ($pos -lt $PolBytes.Length) {
+
+        # Find opening '['  (0x5B 0x00 in UTF-16LE)
+        if ($PolBytes[$pos] -ne 0x5B -or $PolBytes[$pos+1] -ne 0x00) {
+            $pos++
+            continue
+        }
+
+        $entryStart = $pos
+        $pos += 2   # skip '['
+
+        # Read key path (UTF-16LE null-terminated)
+        $keyChars = [System.Collections.Generic.List[char]]::new()
+        while ($pos -lt $PolBytes.Length) {
+            $lo = $PolBytes[$pos]
+            $hi = $PolBytes[$pos + 1]
+            $pos += 2
+            if ($lo -eq 0x00 -and $hi -eq 0x00) { break }
+            $keyChars.Add([char](($hi -shl 8) -bor $lo))
+        }
+        $keyPath = -join $keyChars
+
+        $pos += 2   # skip ';' separator (UTF-16LE)
+
+        # Read value name (UTF-16LE null-terminated)
+        $valChars = [System.Collections.Generic.List[char]]::new()
+        while ($pos -lt $PolBytes.Length) {
+            $lo = $PolBytes[$pos]
+            $hi = $PolBytes[$pos + 1]
+            $pos += 2
+            if ($lo -eq 0x00 -and $hi -eq 0x00) { break }
+            $valChars.Add([char](($hi -shl 8) -bor $lo))
+        }
+        $valueName = -join $valChars
+
+        # Skip ';' + type DWORD + ';' + size DWORD + ';' + data + ']'
+        # That is: 2 + 4 + 2 + 4 + 2 + <size> + 2 bytes
+        $pos += 2   # ';'
+        $type = [System.BitConverter]::ToUInt32($PolBytes, $pos); $pos += 4
+        $pos += 2   # ';'
+        $size = [System.BitConverter]::ToUInt32($PolBytes, $pos); $pos += 4
+        $pos += 2   # ';'
+        $pos += $size   # data bytes
+        $pos += 2   # ']'
+
+        $entryEnd = $pos
+
+        $entries.Add(@{
+            KeyPath   = $keyPath
+            ValueName = $valueName
+            StartByte = $entryStart
+            EndByte   = $entryEnd
+        })
+    }
+
+    return $entries
+}
+
+# ─────────────────────────────────────────────
+#  HELPER – Remove specific entries from pol bytes
+#  Returns rebuilt byte array without the removed entries
+# ─────────────────────────────────────────────
+function Remove-PolEntries {
+    param(
+        [byte[]]$PolBytes,
+        [string]$KeyPath,
+        [string[]]$ValueNames
+    )
+
+    $entries = Parse-PolEntries -PolBytes $PolBytes
+
+    # Identify byte ranges to drop
+    $rangesToDrop = [System.Collections.Generic.List[hashtable]]::new()
+    foreach ($entry in $entries) {
+        if ($entry.KeyPath -eq $KeyPath -and $ValueNames -contains $entry.ValueName) {
+            Write-Status "  Found entry to remove: $($entry.ValueName)" 'Yellow'
+            $rangesToDrop.Add($entry)
+        }
+    }
+
+    if ($rangesToDrop.Count -eq 0) {
+        Write-Status "  No matching entries found in Registry.pol — already clean." 'Green'
+        return $PolBytes
+    }
+
+    # Rebuild byte array skipping the dropped ranges
+    $ms = New-Object System.IO.MemoryStream
+
+    # Always keep the 8-byte PReg header
+    $ms.Write($PolBytes, 0, 8)
+
+    $cursor = 8
+    foreach ($range in ($rangesToDrop | Sort-Object { $_.StartByte })) {
+        # Write everything between cursor and the start of this entry
+        if ($range.StartByte -gt $cursor) {
+            $ms.Write($PolBytes, $cursor, ($range.StartByte - $cursor))
+        }
+        $cursor = $range.EndByte
+    }
+
+    # Write any remaining bytes after the last removed entry
+    if ($cursor -lt $PolBytes.Length) {
+        $ms.Write($PolBytes, $cursor, ($PolBytes.Length - $cursor))
+    }
+
+    $result = $ms.ToArray()
+    $ms.Dispose()
+    return $result
+}
+
+# ─────────────────────────────────────────────
+#  STEP 1 – Remove ADMX file
+# ─────────────────────────────────────────────
+Write-Status "Removing msedge.admx..."
+if (Test-Path $DestAdmx) {
+    Remove-Item -Path $DestAdmx -Force
+    Write-Status "Removed: $DestAdmx" 'Green'
+} else {
+    Write-Status "Already absent: $DestAdmx" 'Yellow'
+}
+
+# ─────────────────────────────────────────────
+#  STEP 2 – Remove ADML file
+# ─────────────────────────────────────────────
+Write-Status "Removing msedge.adml..."
+if (Test-Path $DestAdml) {
+    Remove-Item -Path $DestAdml -Force
+    Write-Status "Removed: $DestAdml" 'Green'
+} else {
+    Write-Status "Already absent: $DestAdml" 'Yellow'
+}
+
+# ─────────────────────────────────────────────
+#  STEP 3 – Remove policy entries from Registry.pol
+# ─────────────────────────────────────────────
+Write-Status "Processing Registry.pol..."
+
+if (-not (Test-Path $PolFile)) {
+    Write-Status "Registry.pol not found — nothing to revert." 'Yellow'
+} else {
+    [byte[]]$pol = [System.IO.File]::ReadAllBytes($PolFile)
+
+    $pol = Remove-PolEntries -PolBytes $pol `
+                             -KeyPath $EdgeKey `
+                             -ValueNames $ValuesToRemove
+
+    [System.IO.File]::WriteAllBytes($PolFile, $pol)
+    Write-Status "Registry.pol updated." 'Green'
+}
+
+# ─────────────────────────────────────────────
+#  STEP 4 – Apply via gpupdate (no reboot needed)
+# ─────────────────────────────────────────────
+Write-Status "Running gpupdate /force..."
+& gpupdate /force /target:computer
+Write-Status "Revert complete — policies set back to Not Configured." 'Green'
