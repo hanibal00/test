@@ -1,0 +1,116 @@
+#Requires -Version 5.1
+#Requires -RunAsAdministrator
+
+<#
+.SYNOPSIS
+    Deploys Microsoft Edge ADMX/ADML templates and configures OCSP/CRL policy settings.
+
+.DESCRIPTION
+    - Copies msedge.admx from \\contoso\wind\sys to C:\Windows\PolicyDefinitions
+    - Copies msedge.adml from \\contoso\wind\sys\en-us to C:\Windows\PolicyDefinitions\en-US
+    - Disables "Enable online OCSP/CRL checks"
+    - Disables "Specify if online OCSP/CRL checks are required for local trust anchors"
+#>
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+# ─────────────────────────────────────────────
+#  CONFIGURATION
+# ─────────────────────────────────────────────
+$SourceAdmx       = '\\contoso\wind\sys\msedge.admx'
+$SourceAdml       = '\\contoso\wind\sys\en-us\msedge.adml'
+$DestAdmx         = 'C:\Windows\PolicyDefinitions'
+$DestAdml         = 'C:\Windows\PolicyDefinitions\en-US'
+$EdgePolicyKey    = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+
+# ─────────────────────────────────────────────
+#  HELPER
+# ─────────────────────────────────────────────
+function Write-Status {
+    param([string]$Message, [string]$Color = 'Cyan')
+    Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $Message" -ForegroundColor $Color
+}
+
+# ─────────────────────────────────────────────
+#  STEP 1 – Copy ADMX template
+# ─────────────────────────────────────────────
+Write-Status "Copying msedge.admx..."
+
+if (-not (Test-Path $SourceAdmx)) {
+    Write-Error "Source not found: $SourceAdmx"
+    exit 1
+}
+
+if (-not (Test-Path $DestAdmx)) {
+    New-Item -Path $DestAdmx -ItemType Directory -Force | Out-Null
+    Write-Status "Created directory: $DestAdmx" 'Yellow'
+}
+
+Copy-Item -Path $SourceAdmx -Destination $DestAdmx -Force
+Write-Status "msedge.admx copied to $DestAdmx" 'Green'
+
+# ─────────────────────────────────────────────
+#  STEP 2 – Copy ADML language file
+# ─────────────────────────────────────────────
+Write-Status "Copying msedge.adml..."
+
+if (-not (Test-Path $SourceAdml)) {
+    Write-Error "Source not found: $SourceAdml"
+    exit 1
+}
+
+if (-not (Test-Path $DestAdml)) {
+    New-Item -Path $DestAdml -ItemType Directory -Force | Out-Null
+    Write-Status "Created directory: $DestAdml" 'Yellow'
+}
+
+Copy-Item -Path $SourceAdml -Destination $DestAdml -Force
+Write-Status "msedge.adml copied to $DestAdml" 'Green'
+
+# ─────────────────────────────────────────────
+#  STEP 3 – Ensure registry key exists
+# ─────────────────────────────────────────────
+Write-Status "Ensuring registry key exists: $EdgePolicyKey"
+
+if (-not (Test-Path $EdgePolicyKey)) {
+    New-Item -Path $EdgePolicyKey -Force | Out-Null
+    Write-Status "Registry key created." 'Yellow'
+}
+
+# ─────────────────────────────────────────────
+#  STEP 4 – Disable "Enable online OCSP/CRL checks"
+#           Registry value: EnableOnlineRevocationChecks  DWORD = 0
+# ─────────────────────────────────────────────
+Write-Status "Disabling 'Enable online OCSP/CRL checks'..."
+
+Set-ItemProperty -Path $EdgePolicyKey `
+                 -Name 'EnableOnlineRevocationChecks' `
+                 -Value 0 `
+                 -Type DWord -Force
+
+Write-Status "EnableOnlineRevocationChecks set to 0 (Disabled)" 'Green'
+
+# ─────────────────────────────────────────────
+#  STEP 5 – Disable "Specify if online OCSP/CRL checks are
+#           required for local trust anchors"
+#           Registry value: RequireOnlineRevocationChecksForLocalAnchors  DWORD = 0
+# ─────────────────────────────────────────────
+Write-Status "Disabling 'Specify if online OCSP/CRL checks are required for local trust anchors'..."
+
+Set-ItemProperty -Path $EdgePolicyKey `
+                 -Name 'RequireOnlineRevocationChecksForLocalAnchors' `
+                 -Value 0 `
+                 -Type DWord -Force
+
+Write-Status "RequireOnlineRevocationChecksForLocalAnchors set to 0 (Disabled)" 'Green'
+
+# ─────────────────────────────────────────────
+#  STEP 6 – Force Group Policy refresh
+# ─────────────────────────────────────────────
+Write-Status "Refreshing Group Policy..."
+& gpupdate /force /target:computer | Out-Null
+Write-Status "Group Policy refreshed." 'Green'
+
+Write-Host ""
+Write-Status "All tasks completed successfully." 'Green'
