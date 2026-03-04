@@ -1,31 +1,20 @@
 #Requires -Version 5.1
 #Requires -RunAsAdministrator
 
-<#
-.SYNOPSIS
-    Deploys Microsoft Edge ADMX/ADML templates and configures OCSP/CRL policy settings.
-
-.DESCRIPTION
-    - Copies msedge.admx from \\contoso\wind\sys to C:\Windows\PolicyDefinitions
-    - Copies msedge.adml from \\contoso\wind\sys\en-us to C:\Windows\PolicyDefinitions\en-US
-    - Disables "Enable online OCSP/CRL checks"
-    - Disables "Specify if online OCSP/CRL checks are required for local trust anchors"
-#>
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 # ─────────────────────────────────────────────
 #  CONFIGURATION
 # ─────────────────────────────────────────────
-$SourceAdmx       = '\\contoso\wind\sys\msedge.admx'
-$SourceAdml       = '\\contoso\wind\sys\en-us\msedge.adml'
-$DestAdmx         = 'C:\Windows\PolicyDefinitions'
-$DestAdml         = 'C:\Windows\PolicyDefinitions\en-US'
-$EdgePolicyKey    = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge'
+$SourceAdmx    = '\\contoso\wind\sys\msedge.admx'
+$SourceAdml    = '\\contoso\wind\sys\en-us\msedge.adml'
+$DestAdmx      = 'C:\Windows\PolicyDefinitions'
+$DestAdml      = 'C:\Windows\PolicyDefinitions\en-US'
+$PolFile       = 'C:\Windows\System32\GroupPolicy\Machine\Registry.pol'
 
 # ─────────────────────────────────────────────
-#  HELPER
+#  HELPER – Status output
 # ─────────────────────────────────────────────
 function Write-Status {
     param([string]$Message, [string]$Color = 'Cyan')
@@ -33,84 +22,130 @@ function Write-Status {
 }
 
 # ─────────────────────────────────────────────
-#  STEP 1 – Copy ADMX template
+#  HELPER – Read Registry.pol into a byte array
+#  Returns an empty (but valid) pol structure if
+#  the file does not exist yet.
+# ─────────────────────────────────────────────
+function Get-PolBytes {
+    param([string]$Path)
+    # Registry.pol header: PReg signature (50 52 65 67) + version (01 00 00 00)
+    $header = [byte[]](0x50,0x52,0x65,0x67,0x01,0x00,0x00,0x00)
+    if (Test-Path $Path) {
+        return [System.IO.File]::ReadAllBytes($Path)
+    }
+    return $header
+}
+
+# ─────────────────────────────────────────────
+#  HELPER – Append one DWORD entry to pol bytes
+#  Format per entry:
+#    [  keypath  \0  valuename  \0 ; type ; size ; data  ]
+#  All strings are UTF-16LE, integers are little-endian.
+# ─────────────────────────────────────────────
+function Add-PolDword {
+    param(
+        [byte[]]$PolBytes,
+        [string]$KeyPath,
+        [string]$ValueName,
+        [uint32]$Value
+    )
+
+    $ms = New-Object System.IO.MemoryStream
+    $ms.Write($PolBytes, 0, $PolBytes.Length)
+
+    $w = New-Object System.IO.BinaryWriter($ms, [System.Text.Encoding]::Unicode)
+
+    # Opening bracket
+    $w.Write([uint16]0x005B)   # '['
+
+    # Key path (UTF-16LE) + null terminator
+    foreach ($c in $KeyPath.ToCharArray()) { $w.Write([uint16][char]$c) }
+    $w.Write([uint16]0x0000)
+
+    # Semicolon separator
+    $w.Write([uint16]0x003B)   # ';'
+
+    # Value name + null terminator
+    foreach ($c in $ValueName.ToCharArray()) { $w.Write([uint16][char]$c) }
+    $w.Write([uint16]0x0000)
+
+    # Semicolon
+    $w.Write([uint16]0x003B)
+
+    # Type: REG_DWORD = 4  (little-endian DWORD)
+    $w.Write([uint32]4)
+
+    # Semicolon
+    $w.Write([uint16]0x003B)
+
+    # Size of data = 4 bytes
+    $w.Write([uint32]4)
+
+    # Semicolon
+    $w.Write([uint16]0x003B)
+
+    # Data value
+    $w.Write([uint32]$Value)
+
+    # Closing bracket
+    $w.Write([uint16]0x005D)   # ']'
+
+    $w.Flush()
+    $result = $ms.ToArray()
+    $w.Dispose()
+    $ms.Dispose()
+    return $result
+}
+
+# ─────────────────────────────────────────────
+#  STEP 1 – Copy ADMX
 # ─────────────────────────────────────────────
 Write-Status "Copying msedge.admx..."
-
-if (-not (Test-Path $SourceAdmx)) {
-    Write-Error "Source not found: $SourceAdmx"
-    exit 1
-}
-
-if (-not (Test-Path $DestAdmx)) {
-    New-Item -Path $DestAdmx -ItemType Directory -Force | Out-Null
-    Write-Status "Created directory: $DestAdmx" 'Yellow'
-}
-
+if (-not (Test-Path $SourceAdmx)) { Write-Error "Not found: $SourceAdmx"; exit 1 }
+if (-not (Test-Path $DestAdmx))   { New-Item -Path $DestAdmx -ItemType Directory -Force | Out-Null }
 Copy-Item -Path $SourceAdmx -Destination $DestAdmx -Force
-Write-Status "msedge.admx copied to $DestAdmx" 'Green'
+Write-Status "msedge.admx -> $DestAdmx" 'Green'
 
 # ─────────────────────────────────────────────
-#  STEP 2 – Copy ADML language file
+#  STEP 2 – Copy ADML
 # ─────────────────────────────────────────────
 Write-Status "Copying msedge.adml..."
-
-if (-not (Test-Path $SourceAdml)) {
-    Write-Error "Source not found: $SourceAdml"
-    exit 1
-}
-
-if (-not (Test-Path $DestAdml)) {
-    New-Item -Path $DestAdml -ItemType Directory -Force | Out-Null
-    Write-Status "Created directory: $DestAdml" 'Yellow'
-}
-
+if (-not (Test-Path $SourceAdml)) { Write-Error "Not found: $SourceAdml"; exit 1 }
+if (-not (Test-Path $DestAdml))   { New-Item -Path $DestAdml -ItemType Directory -Force | Out-Null }
 Copy-Item -Path $SourceAdml -Destination $DestAdml -Force
-Write-Status "msedge.adml copied to $DestAdml" 'Green'
+Write-Status "msedge.adml -> $DestAdml" 'Green'
 
 # ─────────────────────────────────────────────
-#  STEP 3 – Ensure registry key exists
+#  STEP 3 – Ensure GroupPolicy\Machine dir exists
 # ─────────────────────────────────────────────
-Write-Status "Ensuring registry key exists: $EdgePolicyKey"
-
-if (-not (Test-Path $EdgePolicyKey)) {
-    New-Item -Path $EdgePolicyKey -Force | Out-Null
-    Write-Status "Registry key created." 'Yellow'
+$polDir = Split-Path $PolFile
+if (-not (Test-Path $polDir)) {
+    New-Item -Path $polDir -ItemType Directory -Force | Out-Null
+    Write-Status "Created: $polDir" 'Yellow'
 }
 
 # ─────────────────────────────────────────────
-#  STEP 4 – Disable "Enable online OCSP/CRL checks"
-#           Registry value: EnableOnlineRevocationChecks  DWORD = 0
+#  STEP 4 – Build / update Registry.pol
 # ─────────────────────────────────────────────
-Write-Status "Disabling 'Enable online OCSP/CRL checks'..."
+$EdgeKey = 'Software\Policies\Microsoft\Edge'
 
-Set-ItemProperty -Path $EdgePolicyKey `
-                 -Name 'EnableOnlineRevocationChecks' `
-                 -Value 0 `
-                 -Type DWord -Force
+Write-Status "Reading existing Registry.pol (or creating new)..."
+[byte[]]$pol = Get-PolBytes -Path $PolFile
 
-Write-Status "EnableOnlineRevocationChecks set to 0 (Disabled)" 'Green'
+Write-Status "Writing 'EnableOnlineRevocationChecks = 0'..."
+$pol = Add-PolDword -PolBytes $pol -KeyPath $EdgeKey `
+                    -ValueName 'EnableOnlineRevocationChecks' -Value 0
 
-# ─────────────────────────────────────────────
-#  STEP 5 – Disable "Specify if online OCSP/CRL checks are
-#           required for local trust anchors"
-#           Registry value: RequireOnlineRevocationChecksForLocalAnchors  DWORD = 0
-# ─────────────────────────────────────────────
-Write-Status "Disabling 'Specify if online OCSP/CRL checks are required for local trust anchors'..."
+Write-Status "Writing 'RequireOnlineRevocationChecksForLocalAnchors = 0'..."
+$pol = Add-PolDword -PolBytes $pol -KeyPath $EdgeKey `
+                    -ValueName 'RequireOnlineRevocationChecksForLocalAnchors' -Value 0
 
-Set-ItemProperty -Path $EdgePolicyKey `
-                 -Name 'RequireOnlineRevocationChecksForLocalAnchors' `
-                 -Value 0 `
-                 -Type DWord -Force
-
-Write-Status "RequireOnlineRevocationChecksForLocalAnchors set to 0 (Disabled)" 'Green'
+[System.IO.File]::WriteAllBytes($PolFile, $pol)
+Write-Status "Registry.pol updated: $PolFile" 'Green'
 
 # ─────────────────────────────────────────────
-#  STEP 6 – Force Group Policy refresh
+#  STEP 5 – Apply via gpupdate (no reboot needed)
 # ─────────────────────────────────────────────
-Write-Status "Refreshing Group Policy..."
-& gpupdate /force /target:computer | Out-Null
-Write-Status "Group Policy refreshed." 'Green'
-
-Write-Host ""
-Write-Status "All tasks completed successfully." 'Green'
+Write-Status "Running gpupdate /force..."
+& gpupdate /force /target:computer
+Write-Status "Done — policy applied without reboot." 'Green'
