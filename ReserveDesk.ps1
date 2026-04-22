@@ -1,56 +1,50 @@
-# Launch Internet Explorer
-$ie = New-Object -ComObject InternetExplorer.Application
-$ie.Visible = $true  # Set to $false for silent run
+# Load Selenium WebDriver
+Add-Type -Path "C:\Selenium\WebDriver.dll"
 
-# Navigate to reservation page
-$ie.Navigate("https://your-reservation-site.com")
+# Set up Chrome options
+$chromeOptions = New-Object OpenQA.Selenium.Chrome.ChromeOptions
+$chromeOptions.AddArgument("--start-maximized")
 
-# Wait for page to load
-while ($ie.Busy -or $ie.ReadyState -ne 4) { Start-Sleep -Milliseconds 300 }
+# Start Chrome driver
+$driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver("C:\Selenium\", $chromeOptions)
 
-# Click ADD then DESK (from previous steps)
-$addButton = $ie.Document.querySelector("button:contains('ADD')")
-if ($addButton) { $addButton.click() }
+try {
+    $driver.Navigate().GoToUrl("https://your-reservation-site.com")
 
-Start-Sleep -Seconds 2
+    # Click ADD then DESK
+    $driver.FindElement([OpenQA.Selenium.By]::XPath("//button[contains(text(),'ADD')]")).Click()
+    Start-Sleep -Seconds 2
+    $driver.FindElement([OpenQA.Selenium.By]::XPath("//button[contains(text(),'DESK')]")).Click()
 
-$deskButton = $ie.Document.querySelector("button:contains('DESK')")
-if ($deskButton) { $deskButton.click() }
+    Start-Sleep -Seconds 2
 
-# Wait for form to load
-Start-Sleep -Seconds 3
+    # Get all dropdowns by class name
+    $dropdowns = $driver.FindElements([OpenQA.Selenium.By]::ClassName("dropdown-input"))
 
-# Get all dropdowns with class 'dropdown-input'
-$dropdowns = $ie.Document.getElementsByClassName("dropdown-input")
+    # Set Date (2 weeks from today: May 6, 2026)
+    $dropdowns[0].SendKeys("05/06/2026")
+    $dropdowns[0].SendKeys([OpenQA.Selenium.Keys]::Enter)
 
-# Set Date (first dropdown)
-$dateDropdown = $dropdowns.item(0)
-$twoWeeks = (Get-Date).AddDays(14).ToString("MM/dd/yyyy")
-$dateDropdown.value = $twoWeeks
-$dateDropdown.fireEvent("onchange")
+    Start-Sleep -Seconds 1
 
-Start-Sleep -Seconds 1
+    # Select 4th Floor
+    $dropdowns[1].SendKeys("4")
+    $dropdowns[1].SendKeys([OpenQA.Selenium.Keys]::Enter)
 
-# Select 4th Floor (second dropdown)
-$floorDropdown = $dropdowns.item(1)
-$floorDropdown.value = "4"
-$floorDropdown.fireEvent("onchange")
+    Start-Sleep -Seconds 1
 
-Start-Sleep -Seconds 1
+    # Select Seat 04-05
+    $dropdowns[2].SendKeys("04-05")
+    $dropdowns[2].SendKeys([OpenQA.Selenium.Keys]::Enter)
 
-# Select Seat 04-05 (third dropdown)
-$seatDropdown = $dropdowns.item(2)
-$seatDropdown.value = "04-05"
-$seatDropdown.fireEvent("onchange")
+    Start-Sleep -Seconds 1
 
-Start-Sleep -Seconds 1
+    # Click BOOK
+    $driver.FindElement([OpenQA.Selenium.By]::XPath("//button[contains(text(),'BOOK')]")).Click()
 
-# Click BOOK button
-$bookButton = $ie.Document.querySelector("button:contains('BOOK')")
-if ($bookButton) { $bookButton.click() }
+    Write-Host "Reservation completed for Seat 04-05 on May 6, 2026."
 
-Write-Host "Desk reservation completed for May 6, 2026, Seat 04-05."
-
-# Cleanup
-Start-Sleep -Seconds 3
-$ie.Quit()
+} finally {
+    Start-Sleep -Seconds 3
+    $driver.Quit()
+}
