@@ -1,0 +1,118 @@
+# Complete ISO Creator with GUI folder browser - FIXED VERSION
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName Microsoft.VisualBasic
+
+# Define the COM method FIRST
+Function New-ISOUsingCOM {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$SourceFolder,
+        
+        [Parameter(Mandatory=$true)]
+        [string]$OutputISO,
+        
+        [string]$VolumeName = "MyISO"
+    )
+    
+    if (-not (Test-Path $SourceFolder)) {
+        Write-Error "Source folder does not exist: $SourceFolder"
+        return $false
+    }
+    
+    try {
+        Write-Host "Using IMAPI2 COM method..." -ForegroundColor Cyan
+        
+        # Create IMAPI2 file system image
+        $fs = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
+        
+        # Set volume name (max 32 characters)
+        if ($VolumeName.Length -gt 32) {
+            $VolumeName = $VolumeName.Substring(0, 32)
+        }
+        $fs.VolumeName = $VolumeName
+        
+        # Add source directory
+        $root = $fs.Root
+        $root.AddTree($SourceFolder, $true)
+        
+        # Create image
+        $result = $fs.CreateResultImage()
+        $stream = $result.ImageStream
+        
+        # Write to file
+        $bufferSize = 1024 * 1024 # 1MB buffer
+        $buffer = New-Object byte[] $bufferSize
+        
+        $output = [System.IO.File]::OpenWrite($OutputISO)
+        
+        $bytesRead = $stream.Read($buffer, 0, $bufferSize)
+        while ($bytesRead -gt 0) {
+            $output.Write($buffer, 0, $bytesRead)
+            $bytesRead = $stream.Read($buffer, 0, $bufferSize)
+        }
+        
+        $output.Close()
+        $stream.Close()
+        
+        Write-Host "✓ ISO created successfully: $OutputISO" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Error "Failed to create ISO: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+# Main function
+Function Create-ISOFromFolder {
+    # Create folder browser dialog
+    $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+    $folderBrowser.Description = "Select the folder to convert to ISO"
+    $folderBrowser.ShowNewFolderButton = $false
+    
+    if ($folderBrowser.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+        $sourceFolder = $folderBrowser.SelectedPath
+        
+        # Create save file dialog for ISO
+        $saveFileDialog = New-Object System.Windows.Forms.SaveFileDialog
+        $saveFileDialog.Filter = "ISO Files (*.iso)|*.iso"
+        $saveFileDialog.Title = "Save ISO As"
+        $saveFileDialog.FileName = [System.IO.Path]::GetFileName($sourceFolder) + ".iso"
+        
+        if ($saveFileDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $outputISO = $saveFileDialog.FileName
+            
+            # Prompt for volume name using simple method (avoid VisualBasic)
+            $volumeName = Read-Host "Enter Volume Name (press Enter for default)"
+            if ([string]::IsNullOrWhiteSpace($volumeName)) {
+                $volumeName = [System.IO.Path]::GetFileName($sourceFolder)
+                if ($volumeName.Length -gt 30) { $volumeName = $volumeName.Substring(0, 30) }
+            }
+            
+            # Create ISO
+            Write-Host "`nCreating ISO from: $sourceFolder" -ForegroundColor Yellow
+            Write-Host "Output: $outputISO" -ForegroundColor Yellow
+            Write-Host "Volume Name: $volumeName" -ForegroundColor Yellow
+            Write-Host ""
+            
+            # Try New-IsoFile first, fall back to COM method
+            if (Get-Command New-IsoFile -ErrorAction SilentlyContinue) {
+                try {
+                    New-IsoFile -Path $sourceFolder -Destination $outputISO -VolumeName $volumeName -Force
+                    Write-Host "✓ ISO created successfully using New-IsoFile!" -ForegroundColor Green
+                }
+                catch {
+                    Write-Warning "New-IsoFile failed, trying COM method..."
+                    New-ISOUsingCOM -SourceFolder $sourceFolder -OutputISO $outputISO -VolumeName $volumeName
+                }
+            }
+            else {
+                Write-Host "New-IsoFile not available, using COM method..." -ForegroundColor Yellow
+                New-ISOUsingCOM -SourceFolder $sourceFolder -OutputISO $outputISO -VolumeName $volumeName
+            }
+        }
+    }
+}
+
+# Run the function
+Create-ISOFromFolder
