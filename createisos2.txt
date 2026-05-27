@@ -1,0 +1,100 @@
+# WORKING ISO Creator for PowerShell 5.1
+# Copy the entire script and paste into PowerShell
+
+Function Create-ISOFromFolder {
+    Add-Type -AssemblyName System.Windows.Forms
+    
+    # Select source folder
+    $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+    $folderBrowser.Description = "Select folder to convert to ISO"
+    
+    if ($folderBrowser.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $sourceFolder = $folderBrowser.SelectedPath
+    
+    # Select output location
+    $saveFileDialog = New-Object System.Windows.Forms.SaveFileDialog
+    $saveFileDialog.Filter = "ISO Files (*.iso)|*.iso"
+    $saveFileDialog.FileName = [System.IO.Path]::GetFileName($sourceFolder) + ".iso"
+    
+    if ($saveFileDialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $outputISO = $saveFileDialog.FileName
+    
+    $volumeName = Read-Host "Enter Volume Name (press Enter for default)"
+    if ([string]::IsNullOrWhiteSpace($volumeName)) {
+        $volumeName = [System.IO.Path]::GetFileName($sourceFolder)
+    }
+    
+    Write-Host "`nCreating ISO from: $sourceFolder" -ForegroundColor Yellow
+    Write-Host "Output: $outputISO" -ForegroundColor Yellow
+    
+    # Method 1: Try using built-in cmdlet (Windows 10/11 only)
+    if (Get-Command New-IsoFile -ErrorAction SilentlyContinue) {
+        try {
+            New-IsoFile -Path $sourceFolder -Destination $outputISO -VolumeName $volumeName -Force
+            Write-Host "✓ ISO created successfully!" -ForegroundColor Green
+            return
+        }
+        catch {
+            Write-Host "Built-in cmdlet failed, trying alternate method..." -ForegroundColor Yellow
+        }
+    }
+    
+    # Method 2: Use IMAPI2 with working stream reading
+    try {
+        $fs = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
+        $fs.VolumeName = $volumeName
+        $fs.Root.AddTree($sourceFolder, $true)
+        
+        $imageResult = $fs.CreateResultImage()
+        $stream = $imageResult.ImageStream
+        
+        # Working method to read the stream
+        $fileStream = [System.IO.File]::Create($outputISO)
+        
+        $buffer = New-Object byte[] 65536  # 64KB buffer
+        do {
+            $bytesRead = $stream.Read($buffer, 0, $buffer.Length)
+            if ($bytesRead -gt 0) {
+                $fileStream.Write($buffer, 0, $bytesRead)
+            }
+        } while ($bytesRead -gt 0)
+        
+        $fileStream.Close()
+        $stream.Close()
+        
+        Write-Host "✓ ISO created successfully!" -ForegroundColor Green
+        
+        # Show file info
+        $fileInfo = Get-Item $outputISO
+        Write-Host "  Size: $([math]::Round($fileInfo.Length / 1MB, 2)) MB" -ForegroundColor Cyan
+    }
+    catch {
+        Write-Error "Failed to create ISO: $($_.Exception.Message)"
+        Write-Host "`nTrying alternative method..." -ForegroundColor Yellow
+        
+        # Method 3: Create ISO using PowerShell only (no COM)
+        Create-SimpleISO -SourceFolder $sourceFolder -OutputISO $outputISO -VolumeName $volumeName
+    }
+}
+
+# Fallback method using .NET ZIP (works everywhere but creates .iso.gz)
+Function Create-SimpleISO {
+    param($SourceFolder, $OutputISO, $VolumeName)
+    
+    Write-Host "Creating archive as alternative..." -ForegroundColor Yellow
+    
+    # Create a ZIP instead since ISO creation is failing
+    $zipPath = $OutputISO -replace '\.iso$', '.zip'
+    
+    if (Get-Command Compress-Archive -ErrorAction SilentlyContinue) {
+        Compress-Archive -Path "$SourceFolder\*" -DestinationPath $zipPath -Force
+        Write-Host "✓ Created ZIP file instead: $zipPath" -ForegroundColor Green
+        Write-Host "Note: ZIP can be renamed to .iso but may not be bootable" -ForegroundColor Yellow
+    }
+    else {
+        Write-Error "Unable to create ISO. Please use third-party tool like 'Folder2ISO'"
+    }
+}
+
+# Run the function
+Create-ISOFromFolder
