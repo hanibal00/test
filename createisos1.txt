@@ -1,0 +1,71 @@
+# Fixed IMAPI2 ISO Creator - Copy and paste the entire script
+Function Create-ISOFromFolder {
+    Add-Type -AssemblyName System.Windows.Forms
+    
+    # Create folder browser
+    $folderBrowser = New-Object System.Windows.Forms.FolderBrowserDialog
+    $folderBrowser.Description = "Select folder to convert to ISO"
+    
+    if ($folderBrowser.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $sourceFolder = $folderBrowser.SelectedPath
+    
+    # Save file dialog
+    $saveFileDialog = New-Object System.Windows.Forms.SaveFileDialog
+    $saveFileDialog.Filter = "ISO Files (*.iso)|*.iso"
+    $saveFileDialog.FileName = [System.IO.Path]::GetFileName($sourceFolder) + ".iso"
+    
+    if ($saveFileDialog.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $outputISO = $saveFileDialog.FileName
+    
+    $volumeName = Read-Host "Enter Volume Name (press Enter for default)"
+    if ([string]::IsNullOrWhiteSpace($volumeName)) {
+        $volumeName = [System.IO.Path]::GetFileName($sourceFolder)
+        if ($volumeName.Length -gt 30) { $volumeName = $volumeName.Substring(0, 30) }
+    }
+    
+    Write-Host "`nCreating ISO from: $sourceFolder" -ForegroundColor Yellow
+    Write-Host "Output: $outputISO" -ForegroundColor Yellow
+    
+    # Create ISO using working IMAPI2 method
+    try {
+        # Create file system image
+        $fs = New-Object -ComObject IMAPI2FS.MsftFileSystemImage
+        $fs.VolumeName = $volumeName
+        
+        # Add the folder
+        $root = $fs.Root
+        $root.AddTree($sourceFolder, $true)
+        
+        # Create the image
+        $imageResult = $fs.CreateResultImage()
+        $imageStream = $imageResult.ImageStream
+        
+        # Read stream using different approach - use BinaryReader
+        $reader = New-Object System.IO.BinaryReader($imageStream)
+        $writer = [System.IO.File]::OpenWrite($outputISO)
+        
+        # Read in chunks
+        $bufferSize = 1024 * 1024  # 1MB
+        $buffer = $reader.ReadBytes($bufferSize)
+        
+        while ($buffer.Length -gt 0) {
+            $writer.Write($buffer, 0, $buffer.Length)
+            $buffer = $reader.ReadBytes($bufferSize)
+        }
+        
+        $writer.Close()
+        $reader.Close()
+        $imageStream.Close()
+        
+        Write-Host "✓ ISO created successfully!" -ForegroundColor Green
+        Write-Host "  File: $outputISO" -ForegroundColor Cyan
+        $fileInfo = Get-Item $outputISO
+        Write-Host "  Size: $([math]::Round($fileInfo.Length / 1MB, 2)) MB" -ForegroundColor Cyan
+    }
+    catch {
+        Write-Error "Failed: $($_.Exception.Message)"
+    }
+}
+
+# Run it
+Create-ISOFromFolder
